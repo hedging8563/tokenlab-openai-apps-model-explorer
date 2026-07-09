@@ -1,5 +1,8 @@
 # TokenLab OpenAI Apps Model Explorer
 
+[![CI](https://github.com/hedging8563/tokenlab-openai-apps-model-explorer/actions/workflows/ci.yml/badge.svg)](https://github.com/hedging8563/tokenlab-openai-apps-model-explorer/actions/workflows/ci.yml)
+[![MCP](https://img.shields.io/badge/MCP-Streamable%20HTTP-0f766e)](https://tokenlab-model-explorer.vercel.app/mcp)
+
 Lightweight TokenLab Model Explorer prototype for ChatGPT/OpenAI Apps SDK. It exposes an MCP Streamable HTTP endpoint plus an interactive MCP Apps widget for:
 
 - browsing TokenLab models from `/models.json`
