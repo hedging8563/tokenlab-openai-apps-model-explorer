@@ -94,7 +94,7 @@ function endpointExample(endpoint: string, model: string): string {
 
   if (endpoint === 'gemini_generate_content') {
     return `curl ${TOKENLAB_API_BASE}/v1beta/models/${model}:generateContent \\
-  -H "x-goog-api-key: $TOKENLAB_API_KEY" \\
+  -H "Authorization: Bearer $TOKENLAB_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{"contents":[{"role":"user","parts":[{"text":"Hello from TokenLab"}]}]}'`;
   }
@@ -315,11 +315,14 @@ export function createHttpApp() {
   return app;
 }
 
+const app = createHttpApp();
+export default app;
+
 if (process.argv.includes('--smoke')) {
   createTokenLabAppsServer();
   console.log('tokenlab model explorer app ok');
 } else if (import.meta.url === `file://${process.argv[1]}`) {
-  createHttpApp().listen(PORT, () => {
+  app.listen(PORT, () => {
     console.log(`TokenLab Model Explorer App listening on http://localhost:${PORT}`);
     console.log(`MCP endpoint: http://localhost:${PORT}/mcp`);
   });

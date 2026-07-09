@@ -23,6 +23,8 @@ The server listens on `http://localhost:8000`.
 
 For ChatGPT local testing, expose the MCP endpoint with a tunnel such as ngrok, then add the `/mcp` URL as a connector in ChatGPT developer mode.
 
+The Express app is also exported as the default module, so Vercel can deploy this repository without a custom adapter.
+
 ## Environment
 
 ```bash
