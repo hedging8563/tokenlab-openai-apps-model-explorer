@@ -8,6 +8,10 @@ Lightweight TokenLab Model Explorer prototype for ChatGPT/OpenAI Apps SDK. It ex
 
 This repository is intentionally small so it can be used as a public discoverability asset and a starting point for a hosted ChatGPT app.
 
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fhedging8563%2Ftokenlab-openai-apps-model-explorer&project-name=tokenlab-model-explorer&repository-name=tokenlab-model-explorer)
+
+Live MCP endpoint: `https://tokenlab-model-explorer.vercel.app/mcp`
+
 ## Run locally
 
 ```bash
