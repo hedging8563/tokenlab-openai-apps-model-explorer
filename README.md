@@ -28,7 +28,9 @@ npm start
 The server listens on `http://localhost:8000`.
 
 - MCP endpoint: `http://localhost:8000/mcp`
-- Widget preview: `http://localhost:8000/widget`
+- Standalone model directory: `http://localhost:8000/widget`
+
+Opening `/widget` directly loads the complete public model index, with 50 results per page. Search and category filters run across the entire loaded catalog, not just the current page. The embedded MCP App resource remains a tool-result view and displays no placeholder models before the host supplies a result. MCP discovery tools still return a bounded result set for conversation use.
 
 For ChatGPT local testing, expose the MCP endpoint with a tunnel such as ngrok, then add the `/mcp` URL as a connector in ChatGPT developer mode.
 
@@ -58,7 +60,8 @@ PORT=8000
 
 ## Notes
 
-- The Hugging Face static Space source is maintained in `huggingface/index.html`. Upload that file to the existing `kiln4758/tokenlab-model-explorer` Space after validation; do not independently edit its endpoint logic in two places.
+- The standalone `/widget` and Hugging Face static Space share `huggingface/index.html`. Upload that exact file to the existing `kiln4758/tokenlab-model-explorer` Space after validation; do not independently edit its pagination or endpoint logic in two places.
+- `/widget` reads the catalog through same-origin `/public/v1/models`, `/public/v1/models/:model`, and `/public/pricing.json`. These read-only routes forward neither credentials nor arbitrary URLs; the static Space retains direct public API reads from its allowed origin.
 
 - This app does not require a TokenLab API key for discovery tools.
 - Inference tools should use `@tokenlabai/mcp-server`; this repo focuses on model exploration and endpoint examples. System One examples are synchronous typed decisions, not chat replies or authorization to execute actions.

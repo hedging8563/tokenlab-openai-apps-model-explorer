@@ -95,11 +95,7 @@
     </main>
     <script>
       const fallback = {
-        models: [
-          { id: "gpt-5.5", category: "text", provider: "openai" },
-          { id: "claude-sonnet-5", category: "text", provider: "anthropic" },
-          { id: "gemini-3.5-flash", category: "text", provider: "google" }
-        ],
+        models: [],
         example: null
       };
 
@@ -112,16 +108,22 @@
         const output = readToolOutput() || fallback;
         const models = Array.isArray(output.models) ? output.models : fallback.models;
         document.getElementById("summary").textContent =
-          `${models.length} models shown${output.category ? ` for ${output.category}` : ""}.`;
-        document.getElementById("models").innerHTML = models.map((model) => `
-          <article class="card">
-            <div class="model">${model.id || model.model}</div>
-            <div class="meta">${model.category || "model"}${model.provider ? ` · ${model.provider}` : ""}</div>
-          </article>
-        `).join("");
-        if (output.example) {
-          document.getElementById("example").textContent = output.example;
+          output === fallback ? "Run the MCP tool to load live model data." : `${models.length} models shown${output.category ? ` for ${output.category}` : ""}.`;
+        const container = document.getElementById("models");
+        container.replaceChildren();
+        for (const model of models) {
+          const card = document.createElement("article");
+          card.className = "card";
+          const name = document.createElement("div");
+          name.className = "model";
+          name.textContent = model.id || model.model;
+          const meta = document.createElement("div");
+          meta.className = "meta";
+          meta.textContent = `${model.category || "model"}${model.provider ? ` · ${model.provider}` : ""}`;
+          card.append(name, meta);
+          container.append(card);
         }
+        document.getElementById("example").textContent = output.example || "Ask for an endpoint example to populate this panel.";
       }
 
       render();

@@ -315,7 +315,29 @@ export function createHttpApp() {
   });
 
   app.get('/widget', async (_request, response) => {
-    response.type('html').send(await readWidgetHtml());
+    // The standalone directory and HF Space share one maintained public UI.
+    response.type('html').send(await fs.readFile(path.join(__dirname, '../huggingface/index.html'), 'utf8'));
+  });
+
+  // Only public discovery reads are exposed; never forward user credentials or
+  // arbitrary URLs. This keeps standalone browsers independent of gateway CORS.
+  const publicRead = (pathname: string) => async (_request: express.Request, response: express.Response) => {
+    try {
+      const data = await fetchJson(pathname);
+      response.set('Cache-Control', 'public, max-age=15').json(data);
+    } catch {
+      response.status(502).json({ error: 'Public discovery endpoint unavailable' });
+    }
+  };
+  app.get('/public/v1/models', publicRead('/v1/models'));
+  app.get('/public/pricing.json', publicRead('/pricing.json'));
+  app.get('/public/v1/models/:model', (request, response) => {
+    const model = String(request.params.model);
+    if (model === '.' || model === '..' || model.length > 512) {
+      response.status(400).json({ error: 'Invalid model ID' });
+      return;
+    }
+    return publicRead(`/v1/models/${encodeURIComponent(model)}`)(request, response);
   });
 
   app.all('/mcp', async (request, response, next) => {

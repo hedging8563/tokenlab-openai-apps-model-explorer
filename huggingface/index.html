@@ -24,6 +24,7 @@
       }
       main { width: min(1180px, calc(100% - 32px)); margin: 0 auto; padding: 34px 0 48px; }
       header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin-bottom: 24px; }
+      header > div { min-width: 0; }
       h1 { margin: 0; font-size: clamp(26px, 4vw, 42px); line-height: 1.08; letter-spacing: 0; }
       .lede { max-width: 680px; margin: 12px 0 0; color: var(--muted); }
       .links { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
@@ -32,7 +33,8 @@
       .links a:hover, button:hover { border-color: var(--accent); color: var(--accent); }
       .toolbar { display: grid; grid-template-columns: minmax(220px, 1fr) 180px auto; gap: 10px; margin-bottom: 16px; }
       input, select { width: 100%; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); color: var(--ink); padding: 10px 12px; font: inherit; }
-      .status { color: var(--muted); min-height: 24px; margin: 8px 0 14px; }
+      .status { color: var(--muted); min-height: 24px; margin: 0; }
+      .directory-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin: 8px 0 14px; }
       .table-wrap { overflow: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
       table { width: 100%; border-collapse: collapse; min-width: 720px; }
       th, td { padding: 12px 14px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
@@ -46,6 +48,9 @@
       h2 { margin: 0; font-size: 17px; }
       pre { overflow: auto; margin: 12px 0 0; padding: 14px; border-radius: 6px; background: #111827; color: #e5e7eb; font-size: 12px; }
       .note { margin-top: 18px; color: var(--muted); font-size: 13px; }
+      .pagination { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+      button:disabled { opacity: .5; cursor: default; }
+      :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
       @media (max-width: 720px) {
         main { width: min(100% - 22px, 1180px); padding-top: 24px; }
         header { display: block; }
@@ -64,7 +69,7 @@
         <nav class="links" aria-label="TokenLab links">
           <a href="https://tokenlab.sh" target="_blank" rel="noreferrer">Website</a>
           <a href="https://docs.tokenlab.sh" target="_blank" rel="noreferrer">Docs</a>
-          <a href="https://exposure-tokenlab-openai-apps-model.vercel.app/widget" target="_blank" rel="noreferrer">Hosted MCP</a>
+          <a href="https://exposure-tokenlab-openai-apps-model.vercel.app/mcp" target="_blank" rel="noreferrer">MCP endpoint</a>
         </nav>
       </header>
       <section class="toolbar" aria-label="Model filters">
@@ -72,7 +77,14 @@
         <select id="category" aria-label="Filter by category"><option value="">All categories</option></select>
         <button id="refresh" type="button">Refresh public data</button>
       </section>
-      <div id="status" class="status" role="status">Loading public model data...</div>
+      <div class="directory-head">
+        <div id="status" class="status" role="status">Loading public model data...</div>
+        <nav class="pagination" aria-label="Model pages">
+          <span id="page-status" class="muted"></span>
+          <button id="previous" type="button" disabled>Previous</button>
+          <button id="next" type="button" disabled>Next</button>
+        </nav>
+      </div>
       <div class="table-wrap">
         <table>
           <thead><tr><th>Model</th><th>Category</th><th>Provider</th><th>Input / 1M</th><th>Output / 1M</th></tr></thead>
@@ -80,22 +92,25 @@
         </table>
       </div>
       <section class="example">
-        <div class="example-head"><h2>Endpoint example</h2><button id="copy" type="button">Copy cURL</button></div>
+        <div class="example-head"><h2>Endpoint example</h2><button id="copy" type="button" disabled>Copy cURL</button></div>
         <pre id="curl">Select a model to generate an example.</pre>
       </section>
       <p class="note">Pricing and model availability can change. Verify current details in the <a href="https://docs.tokenlab.sh" target="_blank" rel="noreferrer">TokenLab documentation</a> before production use.</p>
     </main>
     <script>
       const API = "https://api.tokenlab.sh";
-      const state = { models: [], selected: "" };
+      const DISCOVERY = location.pathname === '/widget' ? '/public' : API;
+      const PAGE_SIZE = 50;
+      const state = { models: [], selected: "", page: 0, loading: false, ready: false };
       const $ = (id) => document.getElementById(id);
+      const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
 
       function flattenModels(index) {
         return (index.data || []).map(model => ({ id: model.id, category: model.tokenlab?.category || 'unknown' }));
       }
 
       async function endpointExample(model) {
-        const response = await fetch(`${API}/v1/models/${encodeURIComponent(model)}`, { signal: AbortSignal.timeout(30000) });
+        const response = await fetch(`${DISCOVERY}/v1/models/${encodeURIComponent(model)}`, { signal: AbortSignal.timeout(30000) });
         if (!response.ok) throw new Error(`Model detail returned ${response.status}`);
         const detail = await response.json();
         const contract = detail.tokenlab?.public_contract;
@@ -127,16 +142,25 @@
       function render() {
         const query = $("query").value.trim().toLowerCase();
         const category = $("category").value;
-        const visible = state.models.filter((model) =>
+        const filtered = state.models.filter((model) =>
           (!category || model.category === category) && (!query || model.id.toLowerCase().includes(query))
-        ).slice(0, 200);
-        $("status").textContent = `${visible.length} of ${state.models.length} public models shown.`;
+        );
+        const pages = Math.ceil(filtered.length / PAGE_SIZE);
+        state.page = Math.min(state.page, Math.max(0, pages - 1));
+        const start = state.page * PAGE_SIZE;
+        const visible = filtered.slice(start, start + PAGE_SIZE);
+        $("status").textContent = filtered.length
+          ? `${start + 1}–${start + visible.length} of ${filtered.length} matching models · ${state.models.length} public models loaded.`
+          : `No matching models · ${state.models.length} public models loaded.`;
+        $("page-status").textContent = pages ? `Page ${state.page + 1} of ${pages}` : '';
+        $("previous").disabled = state.loading || state.page === 0;
+        $("next").disabled = state.loading || state.page + 1 >= pages;
         $("models").innerHTML = visible.length ? visible.map((model) => `
           <tr data-model="${encodeURIComponent(model.id)}">
-            <td><button class="model" type="button">${model.id}</button></td>
-            <td>${model.category}</td><td class="muted">${model.provider || "Not listed"}</td>
-            <td class="price">${model.input_per_1m == null ? "Not listed" : "$" + model.input_per_1m}</td>
-            <td class="price">${model.output_per_1m == null ? "Not listed" : "$" + model.output_per_1m}</td>
+            <td><button class="model" type="button">${escapeHtml(model.id)}</button></td>
+            <td>${escapeHtml(model.category)}</td><td class="muted">${escapeHtml(model.provider || "Not listed")}</td>
+            <td class="price">${model.input_per_1m == null ? "Not listed" : "$" + escapeHtml(model.input_per_1m)}</td>
+            <td class="price">${model.output_per_1m == null ? "Not listed" : "$" + escapeHtml(model.output_per_1m)}</td>
           </tr>`).join("") : '<tr><td colspan="5" class="muted">No matching public models.</td></tr>';
         document.querySelectorAll("[data-model]").forEach((row) => row.addEventListener("click", async () => {
           const selected = decodeURIComponent(row.dataset.model);
@@ -153,10 +177,18 @@
       }
 
       async function load() {
+        if (state.loading) return;
+        state.loading = true;
+        state.ready = false;
+        $("refresh").disabled = true;
+        $("previous").disabled = true;
+        $("next").disabled = true;
+        $("query").disabled = true;
+        $("category").disabled = true;
         $("status").textContent = "Loading public model data...";
         try {
           const [modelsResponse, pricingResponse] = await Promise.all([
-            fetch(`${API}/v1/models`, { signal: AbortSignal.timeout(30000) }), fetch(`${API}/pricing.json`, { signal: AbortSignal.timeout(30000) })
+            fetch(`${DISCOVERY}/v1/models`, { signal: AbortSignal.timeout(30000) }), fetch(`${DISCOVERY}/pricing.json`, { signal: AbortSignal.timeout(30000) })
           ]);
           if (!modelsResponse.ok || !pricingResponse.ok) throw new Error("Public discovery endpoint unavailable");
           const [modelsIndex, pricingIndex] = await Promise.all([modelsResponse.json(), pricingResponse.json()]);
@@ -166,16 +198,29 @@
             return { ...model, provider: price.provider, input_per_1m: price.platform?.input_per_1m, output_per_1m: price.platform?.output_per_1m };
           });
           const categories = [...new Set(state.models.map((model) => model.category))].sort();
-          $("category").innerHTML = '<option value="">All categories</option>' + categories.map((item) => `<option value="${item}">${item}</option>`).join("");
+          const category = $("category").value;
+          $("category").innerHTML = '<option value="">All categories</option>' + categories.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("");
+          $("category").value = categories.includes(category) ? category : '';
+          state.loading = false;
+          state.ready = true;
           render();
         } catch (error) {
           $("status").textContent = `Could not load public data: ${error.message}`;
+          $("page-status").textContent = '';
           $("models").innerHTML = '<tr><td colspan="5" class="muted">Try refreshing, or use the TokenLab documentation link below.</td></tr>';
+        } finally {
+          state.loading = false;
+          $("refresh").disabled = false;
+          $("query").disabled = !state.ready;
+          $("category").disabled = !state.ready;
         }
       }
 
-      $("query").addEventListener("input", render);
-      $("category").addEventListener("change", render);
+      const filter = () => { if (state.ready) { state.page = 0; render(); } };
+      $("query").addEventListener("input", filter);
+      $("category").addEventListener("change", filter);
+      $("previous").addEventListener("click", () => { if (state.page > 0) { state.page--; render(); } });
+      $("next").addEventListener("click", () => { if (!$("next").disabled) { state.page++; render(); } });
       $("refresh").addEventListener("click", load);
       $("copy").addEventListener("click", async () => {
         if (!state.selected) return;
