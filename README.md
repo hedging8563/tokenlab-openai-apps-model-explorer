@@ -1,7 +1,7 @@
 # TokenLab OpenAI Apps Model Explorer
 
 [![CI](https://github.com/hedging8563/tokenlab-openai-apps-model-explorer/actions/workflows/ci.yml/badge.svg)](https://github.com/hedging8563/tokenlab-openai-apps-model-explorer/actions/workflows/ci.yml)
-[![MCP](https://img.shields.io/badge/MCP-Streamable%20HTTP-0f766e)](https://tokenlab-model-explorer.vercel.app/mcp)
+[![MCP](https://img.shields.io/badge/MCP-Streamable%20HTTP-0f766e)](https://exposure-tokenlab-openai-apps-model.vercel.app/mcp)
 
 Lightweight TokenLab Model Explorer prototype for ChatGPT/OpenAI Apps SDK. It exposes an MCP Streamable HTTP endpoint plus an interactive MCP Apps widget for:
 
@@ -13,7 +13,9 @@ This repository is intentionally small so it can be used as a public discoverabi
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fhedging8563%2Ftokenlab-openai-apps-model-explorer&project-name=tokenlab-model-explorer&repository-name=tokenlab-model-explorer)
 
-Live MCP endpoint: `https://tokenlab-model-explorer.vercel.app/mcp`
+Live MCP endpoint: `https://exposure-tokenlab-openai-apps-model.vercel.app/mcp`
+
+The maintained Vercel project deploys this repository to that hostname. The historical `tokenlab-model-explorer.vercel.app` deployment is not attached to this project and still serves the older contract; use the maintained endpoint for Jev decision examples.
 
 ## Run locally
 
