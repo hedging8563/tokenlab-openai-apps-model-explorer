@@ -18,7 +18,7 @@ const PORT = Number(process.env.PORT || 8000);
 const WIDGET_URI = 'ui://tokenlab/model-explorer.html';
 
 type TokenLabModelsIndex = {
-  categories?: Record<string, { models?: string[] }>;
+  data?: Array<{ id: string; tokenlab?: { category?: string } }>;
 };
 
 type TokenLabPricingIndex = {
@@ -49,7 +49,7 @@ async function readWidgetHtml(): Promise<string> {
 }
 
 async function fetchJson<T>(pathname: string): Promise<T> {
-  const response = await fetch(`${TOKENLAB_API_BASE}${pathname}`);
+  const response = await fetch(`${TOKENLAB_API_BASE}${pathname}`, { signal: AbortSignal.timeout(30_000) });
   if (!response.ok) {
     throw new Error(`TokenLab ${pathname} returned ${response.status}`);
   }
@@ -57,10 +57,10 @@ async function fetchJson<T>(pathname: string): Promise<T> {
 }
 
 function pickModels(index: TokenLabModelsIndex, category: string | undefined, query: string | undefined): ExplorerModel[] {
-  const categories = index.categories || {};
-  const entries = Object.entries(categories)
-    .filter(([name]) => !category || name === category)
-    .flatMap(([name, value]) => (value.models || []).map((id) => ({ id, category: name })));
+  const selectedCategory = category === 'text' ? 'chat' : category;
+  const entries = (index.data || [])
+    .filter(model => !selectedCategory || model.tokenlab?.category === selectedCategory)
+    .map(model => ({ id: model.id, category: model.tokenlab?.category ?? 'unknown' }));
   const normalizedQuery = query?.trim().toLowerCase();
   const filtered = normalizedQuery
     ? entries.filter((model) => model.id.toLowerCase().includes(normalizedQuery))
@@ -85,6 +85,13 @@ function mergePricing(models: ExplorerModel[], pricing: TokenLabPricingIndex): E
 }
 
 function endpointExample(endpoint: string, model: string): string {
+  if (endpoint === 'systemone') {
+    const body = JSON.stringify({ model, state: { ticket: 'Please refund the duplicate charge.' }, questions: { refund: { type: 'noul', instructions: 'Is a refund requested?' } } });
+    return `curl ${TOKENLAB_API_BASE}/v1/systemone \\
+  -H "Authorization: Bearer $TOKENLAB_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '${body.replaceAll("'", "'\\''")}'`;
+  }
   if (endpoint === 'anthropic_messages') {
     return `curl ${TOKENLAB_API_BASE}/v1/messages \\
   -H "Authorization: Bearer $TOKENLAB_API_KEY" \\
@@ -161,7 +168,7 @@ function createTokenLabAppsServer(): McpServer {
       title: 'Open TokenLab Model Explorer',
       description: 'Browse TokenLab models by category or search query.',
       inputSchema: {
-        category: z.enum(['text', 'image', 'video', 'audio', 'embedding']).optional(),
+        category: z.enum(['text', 'chat', 'image', 'video', 'audio', 'embedding', 'decision']).optional(),
         query: z.string().optional(),
       },
       annotations: { readOnlyHint: true },
@@ -171,7 +178,7 @@ function createTokenLabAppsServer(): McpServer {
     },
     async ({ category, query }) => {
       const [modelIndex, pricingIndex] = await Promise.all([
-        fetchJson<TokenLabModelsIndex>('/models.json'),
+        fetchJson<TokenLabModelsIndex>('/v1/models'),
         fetchJson<TokenLabPricingIndex>('/pricing.json'),
       ]);
       const models = mergePricing(pickModels(modelIndex, category, query), pricingIndex);
@@ -244,7 +251,7 @@ function createTokenLabAppsServer(): McpServer {
       title: 'Generate TokenLab Endpoint Example',
       description: 'Generate a copyable cURL example for OpenAI-compatible or native TokenLab endpoints.',
       inputSchema: {
-        endpoint: z.enum(['chat_completions', 'responses', 'anthropic_messages', 'gemini_generate_content']),
+        endpoint: z.enum(['chat_completions', 'responses', 'anthropic_messages', 'gemini_generate_content', 'systemone']),
         model: z.string().default('gpt-5.5'),
       },
       annotations: { readOnlyHint: true },
@@ -253,6 +260,13 @@ function createTokenLabAppsServer(): McpServer {
       },
     },
     async ({ endpoint, model }) => {
+      const detail = await fetchJson<{ tokenlab?: { accepted_request_formats?: string[]; public_contract?: { public_operations?: string[]; request_endpoint?: string; request_endpoint_by_operation?: Record<string, string> } } }>(`/v1/models/${encodeURIComponent(model)}`);
+      const contract = detail.tokenlab?.public_contract;
+      const formats: Record<string, string> = { chat_completions: 'openai_chat_completions', responses: 'openai_responses', anthropic_messages: 'anthropic_messages', gemini_generate_content: 'gemini_generate_content' };
+      const supported = endpoint === 'systemone'
+        ? contract?.public_operations?.includes('systemone') && (contract.request_endpoint_by_operation?.systemone ?? contract.request_endpoint) === '/v1/systemone'
+        : detail.tokenlab?.accepted_request_formats?.includes(formats[endpoint]);
+      if (!supported) throw new Error(`${model} does not declare ${endpoint}; inspect its public model contract before selecting an endpoint.`);
       const example = endpointExample(endpoint, model);
       return {
         content: [{ type: 'text', text: example }],
