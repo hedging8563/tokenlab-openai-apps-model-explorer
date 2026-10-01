@@ -56,7 +56,7 @@ PORT=8000
 - `https://api.tokenlab.sh/v1/models` and `/v1/models/{id}`
 - `https://api.tokenlab.sh/pricing.json`
 - `https://api.tokenlab.sh/integrations.json`
-- `https://docs.tokenlab.sh/openapi.json`
+- `https://tokenlab.sh/docs/openapi.json`
 
 ## Notes
 
