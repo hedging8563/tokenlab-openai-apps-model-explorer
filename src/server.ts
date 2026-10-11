@@ -11,38 +11,40 @@ import {
   registerAppResource,
   registerAppTool,
 } from '@modelcontextprotocol/ext-apps/server';
+import { CatalogUnavailableError, categoryCounts, createCatalogReader, selectModels } from './catalog.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TOKENLAB_API_BASE = (process.env.TOKENLAB_API_BASE || 'https://api.tokenlab.sh').replace(/\/+$/, '');
 const PORT = Number(process.env.PORT || 8000);
 const WIDGET_URI = 'ui://tokenlab/model-explorer.html';
 
-type TokenLabModelsIndex = {
-  data?: Array<{ id: string; tokenlab?: { category?: string } }>;
-};
+const getCatalog = createCatalogReader({
+  apiBase: TOKENLAB_API_BASE,
+  maxAgeMs: process.env.CATALOG_CACHE_MS ? Number(process.env.CATALOG_CACHE_MS) : undefined,
+});
 
-type TokenLabPricingIndex = {
-  data?: Array<{
-    model: string;
-    provider?: string;
-    pricing_unit?: string;
-    platform?: {
-      input_per_1m?: string | null;
-      output_per_1m?: string | null;
-      per_request?: string | null;
-    };
-  }>;
-};
+// Every tool only reads TokenLab's own public catalog: nothing is written, deleted or posted anywhere.
+const READ_ONLY = { readOnlyHint: true, destructiveHint: false, openWorldHint: false } as const;
 
-type ExplorerModel = {
-  id: string;
-  category: string;
-  provider?: string;
-  pricing_unit?: string;
-  input_per_1m?: string | null;
-  output_per_1m?: string | null;
-  per_request?: string | null;
-};
+const CHALLENGE_FILE = path.join(__dirname, '../config/openai-apps-challenge.txt');
+
+// OpenAI Apps domain verification token: env OPENAI_APPS_CHALLENGE_TOKEN, else config/openai-apps-challenge.txt,
+// else none (the route answers 404). The token is public by design.
+export async function readChallengeToken(): Promise<string | null> {
+  const fromEnv = process.env.OPENAI_APPS_CHALLENGE_TOKEN?.trim();
+  if (fromEnv) return fromEnv;
+  try {
+    const fromFile = (await fs.readFile(process.env.OPENAI_APPS_CHALLENGE_FILE || CHALLENGE_FILE, 'utf8')).trim();
+    return fromFile || null;
+  } catch {
+    return null;
+  }
+}
+
+function catalogError(error: unknown) {
+  const message = error instanceof CatalogUnavailableError ? error.message : 'TokenLab live model catalog is unavailable right now; no prices or models were returned.';
+  return { isError: true, content: [{ type: 'text' as const, text: message }] };
+}
 
 async function readWidgetHtml(): Promise<string> {
   return fs.readFile(path.join(__dirname, 'widget.html'), 'utf8');
@@ -54,34 +56,6 @@ async function fetchJson<T>(pathname: string): Promise<T> {
     throw new Error(`TokenLab ${pathname} returned ${response.status}`);
   }
   return response.json() as Promise<T>;
-}
-
-function pickModels(index: TokenLabModelsIndex, category: string | undefined, query: string | undefined): ExplorerModel[] {
-  const selectedCategory = category === 'text' ? 'chat' : category;
-  const entries = (index.data || [])
-    .filter(model => !selectedCategory || model.tokenlab?.category === selectedCategory)
-    .map(model => ({ id: model.id, category: model.tokenlab?.category ?? 'unknown' }));
-  const normalizedQuery = query?.trim().toLowerCase();
-  const filtered = normalizedQuery
-    ? entries.filter((model) => model.id.toLowerCase().includes(normalizedQuery))
-    : entries;
-  return filtered.slice(0, 24);
-}
-
-function mergePricing(models: ExplorerModel[], pricing: TokenLabPricingIndex): ExplorerModel[] {
-  const priceByModel = new Map((pricing.data || []).map((entry) => [entry.model, entry]));
-  return models.map((model) => {
-    const price = priceByModel.get(model.id);
-    if (!price) return model;
-    return {
-      ...model,
-      provider: price.provider,
-      pricing_unit: price.pricing_unit,
-      input_per_1m: price.platform?.input_per_1m ?? null,
-      output_per_1m: price.platform?.output_per_1m ?? null,
-      per_request: price.platform?.per_request ?? null,
-    };
-  });
 }
 
 function endpointExample(endpoint: string, model: string): string {
@@ -166,32 +140,38 @@ function createTokenLabAppsServer(): McpServer {
     'open_tokenlab_model_explorer',
     {
       title: 'Open TokenLab Model Explorer',
-      description: 'Browse TokenLab models by category or search query.',
+      description: 'Browse TokenLab models by category or search query, with context window, capabilities and platform price from the live public catalog.',
       inputSchema: {
-        category: z.enum(['text', 'chat', 'image', 'video', 'audio', 'embedding', 'decision']).optional(),
-        query: z.string().optional(),
+        category: z.string().max(64).optional().describe('Catalog category such as chat (or text), image, video, audio, tts, stt, music, embedding, rerank, 3d, decision.'),
+        query: z.string().max(200).optional(),
       },
-      annotations: { readOnlyHint: true },
+      annotations: READ_ONLY,
       _meta: {
         ui: { resourceUri: WIDGET_URI },
       },
     },
     async ({ category, query }) => {
-      const [modelIndex, pricingIndex] = await Promise.all([
-        fetchJson<TokenLabModelsIndex>('/v1/models'),
-        fetchJson<TokenLabPricingIndex>('/pricing.json'),
-      ]);
-      const models = mergePricing(pickModels(modelIndex, category, query), pricingIndex);
+      let catalog;
+      try {
+        catalog = await getCatalog();
+      } catch (error) {
+        return catalogError(error);
+      }
+      const models = selectModels(catalog, category, query);
       return {
         content: [
           {
             type: 'text',
-            text: `Found ${models.length} TokenLab models${category ? ` in ${category}` : ''}.`,
+            text: `Found ${models.length} TokenLab models${category ? ` in ${category}` : ''} (live catalog read at ${catalog.fetched_at}).`,
           },
         ],
         structuredContent: {
           category: category || 'all',
           query: query || null,
+          total: models.length,
+          catalog_fetched_at: catalog.fetched_at,
+          catalog_source: catalog.source,
+          categories: categoryCounts(catalog),
           models,
         },
       };
@@ -203,42 +183,41 @@ function createTokenLabAppsServer(): McpServer {
     'compare_tokenlab_models',
     {
       title: 'Compare TokenLab Models',
-      description: 'Compare pricing metadata for specific TokenLab model IDs.',
+      description: 'Compare platform price, context window and capabilities for specific TokenLab model IDs, from the live public catalog.',
       inputSchema: {
-        models: z.array(z.string()).min(1).max(8),
+        models: z.array(z.string().max(200)).min(1).max(8),
       },
-      annotations: { readOnlyHint: true },
+      annotations: READ_ONLY,
       _meta: {
         ui: { resourceUri: WIDGET_URI },
       },
     },
     async ({ models }) => {
-      const pricingIndex = await fetchJson<TokenLabPricingIndex>('/pricing.json');
-      const wanted = new Set(models);
-      const compared = (pricingIndex.data || [])
-        .filter((entry) => wanted.has(entry.model))
-        .map((entry) => ({
-          id: entry.model,
-          category: 'pricing',
-          provider: entry.provider,
-          pricing_unit: entry.pricing_unit,
-          input_per_1m: entry.platform?.input_per_1m ?? null,
-          output_per_1m: entry.platform?.output_per_1m ?? null,
-          per_request: entry.platform?.per_request ?? null,
-        }));
-
+      let catalog;
+      try {
+        catalog = await getCatalog();
+      } catch (error) {
+        return catalogError(error);
+      }
+      const byId = new Map(catalog.models.map((m) => [m.id, m]));
+      const compared = models.map((id) => byId.get(id)).filter((m) => m !== undefined);
+      const missing = models.filter((id) => !byId.has(id));
       return {
         content: [
           {
             type: 'text',
-            text: compared.length > 0
-              ? `Compared ${compared.length} TokenLab models.`
-              : 'No matching TokenLab models found in pricing.json.',
+            text: (compared.length > 0
+              ? `Compared ${compared.length} TokenLab models (live catalog read at ${catalog.fetched_at}).`
+              : 'No matching TokenLab models found in the live catalog.')
+              + (missing.length > 0 ? ` Not in the catalog: ${missing.join(', ')}.` : ''),
           },
         ],
         structuredContent: {
           category: 'pricing',
+          catalog_fetched_at: catalog.fetched_at,
+          catalog_source: catalog.source,
           models: compared,
+          missing,
         },
       };
     },
@@ -254,12 +233,20 @@ function createTokenLabAppsServer(): McpServer {
         endpoint: z.enum(['chat_completions', 'responses', 'anthropic_messages', 'gemini_generate_content', 'systemone']),
         model: z.string().default('gpt-5.5'),
       },
-      annotations: { readOnlyHint: true },
+      annotations: READ_ONLY,
       _meta: {
         ui: { resourceUri: WIDGET_URI },
       },
     },
     async ({ endpoint, model }) => {
+      let catalog;
+      try {
+        catalog = await getCatalog();
+      } catch (error) {
+        return catalogError(error);
+      }
+      const listed = catalog.models.find((m) => m.id === model);
+      if (!listed) throw new Error(`${model} is not in the live TokenLab catalog.`);
       const detail = await fetchJson<{ tokenlab?: { accepted_request_formats?: string[]; public_contract?: { public_operations?: string[]; request_endpoint?: string; request_endpoint_by_operation?: Record<string, string> } } }>(`/v1/models/${encodeURIComponent(model)}`);
       const contract = detail.tokenlab?.public_contract;
       const formats: Record<string, string> = { chat_completions: 'openai_chat_completions', responses: 'openai_responses', anthropic_messages: 'anthropic_messages', gemini_generate_content: 'gemini_generate_content' };
@@ -272,7 +259,8 @@ function createTokenLabAppsServer(): McpServer {
         content: [{ type: 'text', text: example }],
         structuredContent: {
           category: 'example',
-          models: [{ id: model, category: endpoint }],
+          models: [{ ...listed, category: endpoint }],
+          catalog_fetched_at: catalog.fetched_at,
           example,
         },
       };
@@ -312,6 +300,15 @@ export function createHttpApp() {
       widget_preview: '/widget',
       tokenlab_api_base: TOKENLAB_API_BASE,
     });
+  });
+
+  app.get('/.well-known/openai-apps-challenge', async (_request, response) => {
+    const token = await readChallengeToken();
+    if (!token) {
+      response.status(404).type('text/plain').send('Not found');
+      return;
+    }
+    response.set('Cache-Control', 'no-store').type('text/plain').send(token);
   });
 
   app.get('/widget', async (_request, response) => {
