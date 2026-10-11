@@ -106,7 +106,7 @@
       const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
 
       function flattenModels(index) {
-        return (index.data || []).map(model => ({ id: model.id, category: model.tokenlab?.category || 'unknown' }));
+        return (index.data || []).map(model => ({ id: model.id, category: model.tokenlab?.category || 'unknown', provider: (model.tokenlab?.providers || [])[0] || model.owned_by, input_per_1m: model.tokenlab?.pricing?.input_per_1m, output_per_1m: model.tokenlab?.pricing?.output_per_1m }));
       }
 
       async function endpointExample(model) {
@@ -187,16 +187,9 @@
         $("category").disabled = true;
         $("status").textContent = "Loading public model data...";
         try {
-          const [modelsResponse, pricingResponse] = await Promise.all([
-            fetch(`${DISCOVERY}/v1/models`, { signal: AbortSignal.timeout(30000) }), fetch(`${DISCOVERY}/pricing.json`, { signal: AbortSignal.timeout(30000) })
-          ]);
-          if (!modelsResponse.ok || !pricingResponse.ok) throw new Error("Public discovery endpoint unavailable");
-          const [modelsIndex, pricingIndex] = await Promise.all([modelsResponse.json(), pricingResponse.json()]);
-          const prices = new Map((pricingIndex.data || []).map((entry) => [entry.model, entry]));
-          state.models = flattenModels(modelsIndex).map((model) => {
-            const price = prices.get(model.id) || {};
-            return { ...model, provider: price.provider, input_per_1m: price.platform?.input_per_1m, output_per_1m: price.platform?.output_per_1m };
-          });
+          const modelsResponse = await fetch(`${DISCOVERY}/v1/models`, { signal: AbortSignal.timeout(30000) });
+          if (!modelsResponse.ok) throw new Error("Public discovery endpoint unavailable");
+          state.models = flattenModels(await modelsResponse.json());
           const categories = [...new Set(state.models.map((model) => model.category))].sort();
           const category = $("category").value;
           $("category").innerHTML = '<option value="">All categories</option>' + categories.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("");
