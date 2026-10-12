@@ -6,6 +6,7 @@ import express from 'express';
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { ErrorCode, GetPromptRequestSchema, ListPromptsRequestSchema, McpError } from '@modelcontextprotocol/sdk/types.js';
 import {
   RESOURCE_MIME_TYPE,
   registerAppResource,
@@ -94,9 +95,17 @@ function endpointExample(endpoint: string, model: string): string {
 }
 
 function createTokenLabAppsServer(): McpServer {
+  // Prompts are declared (and listed as empty) so directory scanners that call
+  // prompts/list get a valid answer instead of "Method not found".
   const server = new McpServer({
     name: 'tokenlab-model-explorer-app',
     version: '0.1.0',
+  }, {
+    capabilities: { prompts: {} },
+  });
+  server.server.setRequestHandler(ListPromptsRequestSchema, () => ({ prompts: [] }));
+  server.server.setRequestHandler(GetPromptRequestSchema, (request) => {
+    throw new McpError(ErrorCode.InvalidParams, `Prompt ${request.params.name} not found`);
   });
 
   registerAppResource(
@@ -143,7 +152,7 @@ function createTokenLabAppsServer(): McpServer {
       description: 'Browse TokenLab models by category or search query, with context window, capabilities and platform price from the live public catalog.',
       inputSchema: {
         category: z.string().max(64).optional().describe('Catalog category such as chat (or text), image, video, audio, tts, stt, music, embedding, rerank, 3d, decision.'),
-        query: z.string().max(200).optional(),
+        query: z.string().max(200).optional().describe('Case-insensitive text matched against model IDs, for example "claude" or "gpt-5".'),
       },
       annotations: READ_ONLY,
       _meta: {
@@ -185,7 +194,7 @@ function createTokenLabAppsServer(): McpServer {
       title: 'Compare TokenLab Models',
       description: 'Compare platform price, context window and capabilities for specific TokenLab model IDs, from the live public catalog.',
       inputSchema: {
-        models: z.array(z.string().max(200)).min(1).max(8),
+        models: z.array(z.string().max(200)).min(1).max(8).describe('One to eight exact TokenLab model IDs to compare, for example ["gpt-5.5", "claude-sonnet-5-5"].'),
       },
       annotations: READ_ONLY,
       _meta: {
@@ -230,8 +239,8 @@ function createTokenLabAppsServer(): McpServer {
       title: 'Generate TokenLab Endpoint Example',
       description: 'Generate a copyable cURL example for OpenAI-compatible or native TokenLab endpoints.',
       inputSchema: {
-        endpoint: z.enum(['chat_completions', 'responses', 'anthropic_messages', 'gemini_generate_content', 'systemone']),
-        model: z.string().default('gpt-5.5'),
+        endpoint: z.enum(['chat_completions', 'responses', 'anthropic_messages', 'gemini_generate_content', 'systemone']).describe('API format for the example: OpenAI Chat Completions, OpenAI Responses, Anthropic Messages, Gemini generateContent, or TokenLab SystemOne.'),
+        model: z.string().default('gpt-5.5').describe('Exact TokenLab model ID to put in the example; it must be in the live catalog and support the chosen endpoint.'),
       },
       annotations: READ_ONLY,
       _meta: {
